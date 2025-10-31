@@ -1,0 +1,34 @@
+import type { ActionFunctionArgs } from "react-router";
+import { authenticate } from "../shopify.server";
+import { upsertOrder } from "../server/storage/orders";
+import {ensureOrderGid} from "../server/shopify/ids";
+import {ensureActiveShopOrNotify} from "../server/shopify/middleware/shopifyGuard";
+
+const MINI = `#graphql
+  query ($id: ID!) {
+    order(id: $id) {
+      id
+      cancelledAt
+      displayFinancialStatus
+    }
+  }
+`;
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { topic, shop, session, payload, admin } = await authenticate.webhook(request);
+  await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
+  if (topic !== "ORDERS_UPDATED") return new Response();
+  const id = ensureOrderGid(payload);
+  const data = await admin.graphql(MINI, { variables: { id } }); // or your makeAdminClient
+  const o = (data as any)?.data?.order;
+
+  await upsertOrder({
+    shopId: shop,
+    orderId: id,
+    cancelledAt: o?.cancelledAt ?? null,
+    financialStatus: o?.displayFinancialStatus ?? null,
+    eligiblePending: false
+  });
+
+  return new Response();
+};

@@ -1,0 +1,47 @@
+api_version = "2025-10"
+
+[[extensions]]
+name   = "SQWAD Conditional Credit"
+handle = "sqwad-conditional-credit"
+uid    = "bf804433-90e6-e4d9-320e-9a367275e9e4a2e2a3c6"
+type   = "ui_extension"
+
+[[extensions.targeting]]
+target = "purchase.checkout.block.render"
+module = "./src/Checkout.jsx"
+
+# If you later show something on the Thank You page, uncomment:
+# [[extensions.targeting]]
+# target = "purchase.thank-you.block.render"
+# module = "./src/ThankYou.jsx"
+
+[extensions.capabilities]
+network_access = true
+api_access     = true
+
+# ✅ Declare the metafields you’ll touch, with explicit write access
+[[extensions.metafields]]
+namespace = "sqwad"
+key       = "predictionId"
+type      = "single_line_text_field"
+mode      = "write"
+
+[[extensions.metafields]]
+namespace = "sqwad"
+key       = "creditOptIn"
+type      = "single_line_text_field"
+mode      = "write"
+
+[[extensions.metafields]]
+namespace = "sqwad"
+key       = "userId"
+type      = "single_line_text_field"
+mode      = "write"
+
+# ✅ Let checkout pass through these cart attributes
+[extensions.checkout]
+cart_attributes = [
+  "sqwad_credit_opt_in",
+  "sqwad_predictionId",
+  "sqwad_userId"
+]
