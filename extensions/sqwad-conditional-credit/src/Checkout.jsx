@@ -1,7 +1,7 @@
 // extensions/checkout/src/Checkout.jsx
 import '@shopify/ui-extensions/preact';
 import {render} from 'preact';
-import {useMemo} from 'preact/hooks';
+import {useMemo, useEffect} from 'preact/hooks';
 import {
   // Metafields
   useMetafield,
@@ -32,7 +32,13 @@ function Extension() {
   const checked = useMemo(() => {
     if (creditMf?.value != null) return String(creditMf.value).toLowerCase() === 'true';
     if (attrOptIn != null) return String(attrOptIn).toLowerCase() === 'true';
-    return false;
+    return true;
+  }, [creditMf?.value, attrOptIn]);
+
+  useEffect(() => {
+    if (creditMf?.value == null && attrOptIn == null) {
+      void persist(true); // sets both attribute + metafield ASAP
+    }
   }, [creditMf?.value, attrOptIn]);
 
   async function persist(next) {

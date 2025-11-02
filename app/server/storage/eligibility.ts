@@ -1,5 +1,6 @@
 import { db } from "../firebase";
 import type { OrderRecord } from "./orders";
+import { orderDocId } from "../shopify/ids";
 
 /** Winners list for an event */
 export async function getCorrectPredictions(eventId: string): Promise<string[]> {
@@ -16,10 +17,13 @@ export async function findEligibleOrders(
   predictionIds: string[]
 ): Promise<Array<OrderRecord & { id: string }>> {
   const out: Array<OrderRecord & { id: string }> = [];
+  const ordersCollection = db
+    .collection("shops")
+    .doc(shopId)
+    .collection("orders");
   for (let i = 0; i < predictionIds.length; i += 10) {
     const chunk = predictionIds.slice(i, i + 10);
-    const q = db.collection("orders")
-      .where("shopId", "==", shopId)
+    const q = ordersCollection
       .where("predictionId", "in", chunk)
       .where("eligiblePending", "==", true)
       .where("credited", "==", false);
@@ -44,7 +48,8 @@ export async function markCredited(
   }
 ) {
   const creditId = updates.idempotencyKey ?? `cred_${order.shopId}_${order.orderId}`;
-  const orderRef = db.collection("orders").doc(`${order.shopId}_${order.orderId}`);
+  const orderIdPart = orderDocId(order.orderId);
+  const orderRef = db.doc(`shops/${order.shopId}/orders/${orderIdPart}`);
   const creditRef = db.collection("credits").doc(creditId);
 
   await db.runTransaction(async trx => {
@@ -52,10 +57,11 @@ export async function markCredited(
     if (creditSnap.exists) return; // idempotent
 
     if (updates.failed) {
-      trx.set(orderRef, { creditError: updates.creditError ?? "unknown" }, { merge: true });
+      const failurePatch = { creditError: updates.creditError ?? "unknown" };
+      trx.set(orderRef, failurePatch, { merge: true });
       trx.set(creditRef, {
         creditId, shopId: order.shopId, orderId: order.orderId,
-        predictionId: order.predictionId, userId: order.userId,
+        predictionId: order.predictionId ?? null, userId: order.userId,
         status: "failed", error: updates.creditError ?? "unknown",
         mode: updates.mode ?? null, createdAt: new Date().toISOString()
       }, { merge: true });
@@ -64,13 +70,21 @@ export async function markCredited(
 
     trx.set(creditRef, {
       creditId, shopId: order.shopId, orderId: order.orderId,
-      predictionId: order.predictionId, userId: order.userId,
+      predictionId: order.predictionId ?? null, userId: order.userId,
       amount: updates.amount ?? undefined, currency: updates.currency ?? order.currency,
       mode: updates.mode ?? null, giftCardId: updates.giftCardId ?? null,
       storeCreditTxnId: updates.storeCreditTxnId ?? null,
       status: "issued", issuedAt: new Date().toISOString(), idempotencyKey: creditId
     }, { merge: true });
 
-    trx.set(orderRef, { credited: true, eligiblePending: false, creditError: null }, { merge: true });
+    const successPatch = { credited: true, eligiblePending: false, creditError: null };
+    trx.set(orderRef, successPatch, { merge: true });
   });
+}
+
+export async function creditRecordExists(creditId: string): Promise<boolean> {
+  if (!creditId) return false;
+  const ref = db.collection("credits").doc(creditId);
+  const snap = await ref.get();
+  return snap.exists;
 }
