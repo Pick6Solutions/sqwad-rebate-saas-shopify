@@ -1,6 +1,6 @@
 // app/routes/api.credit-winners.tsx
-import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { authenticate, sessionStorage } from "../shopify.server";
 import { makeAdminClient } from "../server/shopify/admin";
 import {
   getCorrectPredictions,
@@ -9,6 +9,7 @@ import {
   creditRecordExists,
 } from "../server/storage/eligibility";
 import { getOrderRecord, type OrderRecord } from "../server/storage/orders";
+import { auth } from "../server/firebase";
 
 const API_VERSION = "2025-10";
 
@@ -28,62 +29,135 @@ mutation IssueSqwadGiftCard($input: GiftCardCreateInput!, $idemp: String!) {
   }
 }`;
 
+// ---------- types ----------
 type BodyWinners = {
-  // existing winners flow
   eventId: string;
   mode?: "store_credit" | "gift_card";
   basis?: "subtotal" | "total";
   cap?: number;
   minSpend?: number;
   waitHours?: number;
-  expiresAt?: string;      // NEW: ISO date, optional store credit expiry
+  expiresAt?: string; // ISO date, optional store credit expiry
+  shopId?: string;
 };
 
 type ManualOrder = {
   orderId: string;
   email: string;
   subtotal: number;
-  currencyCode: string; // e.g., "USD"
+  currencyCode: string;
 };
 
 type BodyManual = {
-  // manual selection from OrdersViewer
   orders: ManualOrder[];
   cap?: number;
   minSpend?: number;
-  expiresAt?: string;     // optional expiry
+  expiresAt?: string;
+  customerIdSent?: string; // when all orders share the same customer
+  shopId?: string;
 };
 
 type Incoming = BodyWinners | BodyManual;
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
-  const shop = session?.shop;
-  const token = session?.accessToken;
-  if (!shop || !token) {
-    throw new Response("Missing Shopify session", { status: 401 });
+// ---------- CORS / preflight ----------
+function cors(request: Request) {
+  const origin = request.headers.get("Origin") ?? "";
+  const headers: Record<string, string> = {
+    "Vary": "Origin",
+    "Access-Control-Allow-Methods": "POST,OPTIONS,GET",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Content-Type": "application/json",
+  };
+  // Only echo origin & allow credentials for cross-origin cases
+  if (origin) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Access-Control-Allow-Credentials"] = "true";
   }
+  return headers;
+}
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: cors(request) });
+  }
+  // Optional health check
+  return Response.json({ ok: true }, { headers: cors(request) });
+};
+
+// ---------- action ----------
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const headers = cors(request);
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers });
+  }
+  const url = new URL(request.url);
+  const dryRun = url.searchParams.get("dryRun") === "1";
+
+  let parsedBody: Incoming | undefined;
+  if (request.method !== "OPTIONS" && request.method !== "GET") {
+    try {
+      parsedBody = (await request.clone().json()) as Incoming;
+    } catch {
+      // ignore parse failure here; handled later when body required
+    }
+  }
+
+  // Handle auth and convert redirects to JSON
+  let shop: string | undefined;
+  let token: string | undefined;
+  try {
+    const { session } = await authenticate.admin(request);
+    shop = session?.shop;
+    token = session?.accessToken;
+  } catch (err: any) {
+    const fallback = await resolveOfflineSession(request, headers, parsedBody);
+    if (fallback?.shop && fallback?.token) {
+      shop = fallback.shop;
+      token = fallback.token;
+    } else if (fallback?.errorResponse) {
+      return fallback.errorResponse;
+    } else if (err instanceof Response) {
+      const status = err.status === 302 ? 401 : err.status || 401;
+      return Response.json({ ok: false, error: "Not authenticated" }, { status, headers });
+    } else {
+      return Response.json({ ok: false, error: "Auth error" }, { status: 401, headers });
+    }
+  }
+  if (!shop || !token) {
+    const fallback = await resolveOfflineSession(request, headers, parsedBody);
+    if (fallback?.errorResponse) return fallback.errorResponse;
+    if (!fallback?.shop || !fallback?.token) {
+      return Response.json({ ok: false, error: "Missing Shopify session" }, { status: 401, headers });
+    }
+    shop = fallback.shop;
+    token = fallback.token;
+  }
+
   const admin = makeAdminClient(shop, token, API_VERSION);
 
-  let parsed: unknown;
-  try {
-    parsed = await request.json();
-  } catch (error) {
-    throw new Response(
-      JSON.stringify({ ok: false, error: "Invalid JSON payload" }),
-      { status: 400, headers: { "content-type": "application/json" } },
-    );
+  const body = parsedBody;
+  if (!body) {
+    return Response.json({ ok: false, error: "Invalid JSON payload" }, { status: 400, headers });
   }
-  const body = parsed as Incoming;
 
-  // ---- BRANCH 1: Manual selections (OrdersViewer -> POST /api/shops/:shopId/grant-credit) ----
+  // ---- BRANCH 1: Manual selections (OrdersViewer) ----
   if ("orders" in body) {
-    if (!Array.isArray(body.orders) || body.orders.length === 0) {
-      return Response.json({ ok: false, processed: 0, failures: [{ orderId: "", error: "No orders supplied" }] }, { status: 400 });
-    }
     const cap = body.cap;
     const minSpend = body.minSpend;
     const expiresAt = body.expiresAt;
+    const customerIdSent = body.customerIdSent?.trim();
+
+    if (!Array.isArray(body.orders) || body.orders.length === 0) {
+      return Response.json(
+        { ok: false, processed: 0, failures: [{ orderId: "", error: "No orders supplied" }] },
+        { status: 400, headers }
+      );
+    }
+
+    if (dryRun) {
+      return Response.json({ ok: true, processed: body.orders.length, failures: [] }, { headers });
+    }
+
     let processed = 0;
     const failures: Array<{ orderId: string; error: string }> = [];
 
@@ -132,27 +206,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       try {
         const currencyToUse = record.currency;
-        if (!currencyToUse) {
-          throw new Error("Missing currency for store credit");
-        }
+        if (!currencyToUse) throw new Error("Missing currency for store credit");
 
-        let customerId = record.customerId ?? undefined;
+        let customerId = customerIdSent || record.customerId || undefined;
         if (!customerId) {
           const emailToUse = record.customerEmail;
-          if (!emailToUse) {
-            throw new Error("Missing customer email");
-          }
+          if (!emailToUse) throw new Error("Missing customer email");
           customerId = await findOrCreateCustomerByEmail(admin, emailToUse);
-          if (!record.customerId) {
-            record.customerId = customerId;
-          }
+          if (!record.customerId) record.customerId = customerId;
         }
 
-        if (!customerId) {
-          throw new Error("Unable to resolve customer id");
-        }
-
-        const txn = await creditCustomer(admin, customerId, amount, currencyToUse, { expiresAt });
+        const txn = await creditCustomer(admin, customerId!, amount, currencyToUse, { expiresAt });
 
         await markCredited(record, {
           mode: "store_credit",
@@ -165,17 +229,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       } catch (e: any) {
         const errMsg = String(e?.message || e);
         failures.push({ orderId, error: errMsg });
-        await markCredited(record, {
-          failed: true,
-          creditError: errMsg,
-        });
+        await markCredited(record, { failed: true, creditError: errMsg });
       }
     }
 
-    return Response.json({ ok: true, processed, failures });
+    return Response.json({ ok: true, processed, failures }, { headers });
   }
 
-  // ---- BRANCH 2: Existing winners flow (eventId -> predictions -> eligible orders) ----
+  // ---- BRANCH 2: Winners flow (eventId -> predictions -> eligible orders) ----
   const {
     mode = "store_credit",
     basis = "subtotal",
@@ -185,13 +246,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     expiresAt,
   } = body as BodyWinners;
 
-    const eventId = (body as BodyWinners).eventId;
-    if (!eventId) {
-      return Response.json({ ok: false, credited: 0, reason: "missing eventId" }, { status: 400 });
-    }
-    const predictionIds = await getCorrectPredictions(eventId);
+  const eventId = (body as BodyWinners).eventId;
+  if (!eventId) {
+    return Response.json({ ok: false, credited: 0, reason: "missing eventId" }, { status: 400, headers });
+  }
+
+  if (dryRun) {
+    return Response.json({ ok: true, credited: 0, totalEligible: 0, dryRun: true }, { headers });
+  }
+
+  const predictionIds = await getCorrectPredictions(eventId);
   if (!predictionIds.length) {
-    return Response.json({ ok: true, credited: 0, reason: "no winners" });
+    return Response.json({ ok: true, credited: 0, reason: "no winners" }, { headers });
   }
 
   const orders = await findEligibleOrders(shop, predictionIds);
@@ -202,9 +268,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const createdIso = o.createdAt ?? undefined;
       if (createdIso) {
         const created = new Date(createdIso).getTime();
-        if (!Number.isNaN(created) && Date.now() - created < waitHours * 3_600_000) {
-          continue;
-        }
+        if (!Number.isNaN(created) && Date.now() - created < waitHours * 3_600_000) continue;
       }
     }
 
@@ -219,7 +283,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     try {
       if (mode === "store_credit") {
-        // If upstream doesn't attach customerId, fallback by email
         let customerId: string | undefined = o.customerId ?? undefined;
         if (!customerId) {
           const email = o.customerEmail;
@@ -272,11 +335,94 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
-  return Response.json({ ok: true, credited, totalEligible: orders.length });
+  return Response.json({ ok: true, credited, totalEligible: orders.length }, { headers });
 };
 
-// ---------- helpers ----------
+type OfflineSessionResult = {
+  shop?: string;
+  token?: string;
+  errorResponse?: Response;
+};
 
+async function resolveOfflineSession(
+  request: Request,
+  headers: Record<string, string>,
+  body?: Incoming
+): Promise<OfflineSessionResult | undefined> {
+  const authHeader = request.headers.get("Authorization") ?? "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!match) return undefined;
+
+  const idToken = match[1]?.trim();
+  if (!idToken) {
+    return {
+      errorResponse: Response.json(
+        { ok: false, error: "Invalid authorization header" },
+        { status: 401, headers }
+      ),
+    };
+  }
+
+  let decoded;
+  try {
+    decoded = await auth.verifyIdToken(idToken);
+  } catch {
+    return {
+      errorResponse: Response.json(
+        { ok: false, error: "Unauthorized" },
+        { status: 401, headers }
+      ),
+    };
+  }
+
+  const email = typeof decoded?.email === "string" ? decoded.email.toLowerCase() : undefined;
+  if (!email) {
+    return {
+      errorResponse: Response.json(
+        { ok: false, error: "Authenticated user missing email" },
+        { status: 403, headers }
+      ),
+    };
+  }
+
+  const shopId = extractShopId(body);
+  if (!shopId) {
+    return {
+      errorResponse: Response.json(
+        { ok: false, error: "Missing shop identifier" },
+        { status: 400, headers }
+      ),
+    };
+  }
+
+  const normalizedShop = normalizeShopDomain(shopId);
+  const sessionId = `offline_${normalizedShop}`;
+  const session = await sessionStorage.loadSession(sessionId);
+  if (!session?.accessToken) {
+    return {
+      errorResponse: Response.json(
+        { ok: false, error: "Offline session not found for shop" },
+        { status: 403, headers }
+      ),
+    };
+  }
+
+  return { shop: normalizedShop, token: session.accessToken };
+}
+
+function extractShopId(body?: Incoming): string | undefined {
+  if (!body) return undefined;
+  if (typeof (body as any).shopId === "string") {
+    return (body as any).shopId;
+  }
+  return undefined;
+}
+
+function normalizeShopDomain(shop: string): string {
+  return shop.replace(/^https?:\/\//i, "").replace(/\/$/, "").toLowerCase();
+}
+
+// ---------- helpers ----------
 async function findOrCreateCustomerByEmail(
   admin: ReturnType<typeof makeAdminClient>,
   email: string

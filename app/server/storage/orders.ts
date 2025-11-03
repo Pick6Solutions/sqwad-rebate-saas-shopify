@@ -26,6 +26,7 @@ export type OrderUpsert = {
   credited?: boolean | null;        // if you’re issuing credit/codes
   createdAt?: string | null;        // ISO
   updatedAtISO?: string | null;     // optional override
+  excluded?: boolean | null;
 };
 
 export type OrderRecord = Omit<OrderUpsert, "orderId"> & {

@@ -97,6 +97,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     eligiblePending,
     credited: false,
     createdAt: order.createdAt,
+    excluded: false
   });
 
   await markRegistered(shop, orderGid, true);
