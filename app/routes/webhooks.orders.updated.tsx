@@ -15,6 +15,16 @@ const MINI = `#graphql
   }
 `;
 
+type MiniOrderResponse = {
+  data?: {
+    order?: {
+      id?: string | null;
+      cancelledAt?: string | null;
+      displayFinancialStatus?: string | null;
+    } | null;
+  };
+};
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, session, payload } = await authenticate.webhook(request);
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
@@ -22,8 +32,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const id = ensureOrderGid(payload);
   if (!session?.accessToken) throw new Response("Missing Shopify access token", { status: 401 });
   const client = makeAdminClient(shop, session.accessToken);
-  const data = await client(MINI, { id });
-  const o = (data as any)?.data?.order;
+  const data = await client<MiniOrderResponse>(MINI, { id });
+  const o = data.data?.order;
 
   await upsertOrder({
     shopId: shop,

@@ -1,5 +1,6 @@
 // app/routes/api.credit-winners.tsx
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import type { DecodedIdToken } from "firebase-admin/auth";
 import { authenticate, sessionStorage } from "../shopify.server";
 import { makeAdminClient } from "../server/shopify/admin";
 import {
@@ -28,6 +29,50 @@ mutation IssueSqwadGiftCard($input: GiftCardCreateInput!, $idemp: String!) {
     userErrors { field message }
   }
 }`;
+
+type StoreCreditAccountCreditResponse = {
+  data?: {
+    storeCreditAccountCredit?: {
+      storeCreditAccountTransaction?: { id: string };
+      userErrors?: Array<{ message?: string }>;
+    };
+  };
+};
+
+type GiftCardCreateResponse = {
+  data?: {
+    giftCardCreate?: {
+      giftCard?: { id: string };
+      userErrors?: Array<{ message?: string }>;
+    };
+  };
+};
+
+type CustomerByIdentifierResponse = {
+  data?: {
+    customerByIdentifier?: {
+      id?: string;
+      email?: string | null;
+    } | null;
+  };
+};
+
+type CustomerCreateResponse = {
+  data?: {
+    customerCreate?: {
+      customer?: { id?: string | null } | null;
+      userErrors?: Array<{ message?: string }>;
+    } | null;
+  };
+};
+
+type CustomerEmailResponse = {
+  data?: {
+    customer?: {
+      email?: string | null;
+    } | null;
+  };
+};
 
 // ---------- types ----------
 type BodyWinners = {
@@ -109,7 +154,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const { session } = await authenticate.admin(request);
     shop = session?.shop;
     token = session?.accessToken;
-  } catch (err: any) {
+  } catch (err: unknown) {
     const fallback = await resolveOfflineSession(request, headers, parsedBody);
     if (fallback?.shop && fallback?.token) {
       shop = fallback.shop;
@@ -226,8 +271,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           currency: currencyToUse,
         });
         processed++;
-      } catch (e: any) {
-        const errMsg = String(e?.message || e);
+      } catch (e: unknown) {
+        const errMsg = formatError(e);
         failures.push({ orderId, error: errMsg });
         await markCredited(record, { failed: true, creditError: errMsg });
       }
@@ -307,7 +352,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (!email) throw new Error("Missing customer email for gift card");
         const currencyCode = o.currency ?? undefined;
         if (!currencyCode) throw new Error("Missing currency for gift card");
-        const resp = await admin(GIFT_CARD_CREATE, {
+        const resp = await admin<GiftCardCreateResponse>(GIFT_CARD_CREATE, {
           idemp,
           input: {
             initialValue: amount.toFixed(2),
@@ -316,8 +361,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             customerEmail: email,
           },
         });
-        const gc = (resp as any)?.data?.giftCardCreate?.giftCard;
-        const errs = (resp as any)?.data?.giftCardCreate?.userErrors ?? [];
+        const giftCardData = resp.data?.giftCardCreate;
+        const gc = giftCardData?.giftCard;
+        const errs = giftCardData?.userErrors ?? [];
         if (!gc || errs.length) throw new Error(`Gift card create failed: ${JSON.stringify(errs)}`);
 
         await markCredited(o, {
@@ -330,8 +376,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       credited++;
-    } catch (e: any) {
-      await markCredited(o, { failed: true, creditError: String(e?.message || e) });
+    } catch (e: unknown) {
+      await markCredited(o, { failed: true, creditError: formatError(e) });
     }
   }
 
@@ -363,7 +409,7 @@ async function resolveOfflineSession(
     };
   }
 
-  let decoded;
+  let decoded: DecodedIdToken | undefined;
   try {
     decoded = await auth.verifyIdToken(idToken);
   } catch {
@@ -411,9 +457,10 @@ async function resolveOfflineSession(
 }
 
 function extractShopId(body?: Incoming): string | undefined {
-  if (!body) return undefined;
-  if (typeof (body as any).shopId === "string") {
-    return (body as any).shopId;
+  if (!body || typeof body !== "object") return undefined;
+  if ("shopId" in body) {
+    const { shopId } = body as { shopId?: unknown };
+    if (typeof shopId === "string") return shopId;
   }
   return undefined;
 }
@@ -423,6 +470,20 @@ function normalizeShopDomain(shop: string): string {
 }
 
 // ---------- helpers ----------
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 async function findOrCreateCustomerByEmail(
   admin: ReturnType<typeof makeAdminClient>,
   email: string
@@ -434,8 +495,8 @@ async function findOrCreateCustomerByEmail(
         email
       }
     }`;
-  const q = await admin(Q, { email });
-  const found = (q as any)?.data?.customerByIdentifier;
+  const q = await admin<CustomerByIdentifierResponse>(Q, { email });
+  const found = q.data?.customerByIdentifier;
   if (found?.id) return found.id;
 
   const CREATE = `#graphql
@@ -445,10 +506,11 @@ async function findOrCreateCustomerByEmail(
         userErrors { field message }
       }
     }`;
-  const r = await admin(CREATE, { input: { email } });
-  const errs = (r as any)?.data?.customerCreate?.userErrors ?? [];
+  const r = await admin<CustomerCreateResponse>(CREATE, { input: { email } });
+  const createResult = r.data?.customerCreate;
+  const errs = createResult?.userErrors ?? [];
   if (errs.length) throw new Error(`customerCreate: ${JSON.stringify(errs)}`);
-  const id = (r as any)?.data?.customerCreate?.customer?.id;
+  const id = createResult?.customer?.id ?? undefined;
   if (!id) throw new Error("customerCreate: no id returned");
   return id;
 }
@@ -460,7 +522,7 @@ async function creditCustomer(
   currencyCode: string,
   opts?: { expiresAt?: string }
 ) {
-  const variables: any = {
+  const variables: Record<string, unknown> = {
     id: customerId,
     creditInput: {
       creditAmount: { amount: amount.toFixed(2), currencyCode },
@@ -468,8 +530,8 @@ async function creditCustomer(
     },
   };
 
-  const resp = await admin(SC_CREDIT_MUT, variables);
-  const data = (resp as any)?.data?.storeCreditAccountCredit;
+  const resp = await admin<StoreCreditAccountCreditResponse>(SC_CREDIT_MUT, variables);
+  const data = resp.data?.storeCreditAccountCredit;
   const errs = data?.userErrors ?? [];
   if (errs.length) throw new Error(`storeCreditAccountCredit: ${JSON.stringify(errs)}`);
   const txn = data?.storeCreditAccountTransaction;
@@ -483,6 +545,6 @@ async function lookupCustomerEmail(
 ): Promise<string | null> {
   if (!customerGid) return null;
   const Q = `#graphql query($id:ID!){ customer(id:$id){ email } }`;
-  const r = await admin(Q, { id: customerGid });
-  return (r as any)?.data?.customer?.email ?? null;
+  const r = await admin<CustomerEmailResponse>(Q, { id: customerGid });
+  return r.data?.customer?.email ?? null;
 }

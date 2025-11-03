@@ -24,6 +24,26 @@ const ORDER_QUERY = `#graphql
     }
   }`;
 
+type OrderQueryResponse = {
+  data?: {
+    order?: {
+      id?: string;
+      name?: string | null;
+      createdAt?: string | null;
+      customer?: { id?: string | null; email?: string | null } | null;
+      currencyCode?: string | null;
+      subtotalPriceSet?: { shopMoney?: { amount?: string | null } | null } | null;
+      totalPriceSet?: { shopMoney?: { amount?: string | null } | null } | null;
+      displayFinancialStatus?: string | null;
+      cancelledAt?: string | null;
+      metafields?: {
+        edges?: Array<{ node?: { key?: string | null; value?: string | null } | null }> | null;
+      } | null;
+      customAttributes?: Array<{ key?: string | null; value?: string | null } | null> | null;
+    } | null;
+  };
+};
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, session, payload } = await authenticate.webhook(request); // ✅ include session
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
@@ -35,15 +55,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
   const admin = makeAdminClient(shop, session.accessToken);
 
-  const data = await admin(ORDER_QUERY, { id: orderGid });
-  const order = (data as any)?.data?.order;
+  const data = await admin<OrderQueryResponse>(ORDER_QUERY, { id: orderGid });
+  const order = data.data?.order;
   if (!order) return new Response(); // defensively ignore if not found
 
   // (Optional) extra guard
   if (order.displayFinancialStatus !== "PAID") return new Response();
   const metafields = new Map<string, string>();
   for (const edge of order?.metafields?.edges ?? []) {
-    metafields.set(edge.node.key, edge.node.value);
+    const node = edge?.node;
+    if (!node?.key) continue;
+    metafields.set(node.key, node.value ?? "");
   }
 
   const noteAttributes = new Map<string, string>();

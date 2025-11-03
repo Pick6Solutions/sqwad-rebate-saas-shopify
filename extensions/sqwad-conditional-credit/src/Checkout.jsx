@@ -1,7 +1,7 @@
 // extensions/checkout/src/Checkout.jsx
 import '@shopify/ui-extensions/preact';
 import {render} from 'preact';
-import {useMemo, useEffect} from 'preact/hooks';
+import {useMemo, useEffect, useCallback} from 'preact/hooks';
 import {
   // Metafields
   useMetafield,
@@ -35,13 +35,7 @@ function Extension() {
     return true;
   }, [creditMf?.value, attrOptIn]);
 
-  useEffect(() => {
-    if (creditMf?.value == null && attrOptIn == null) {
-      void persist(true); // sets both attribute + metafield ASAP
-    }
-  }, [creditMf?.value, attrOptIn]);
-
-  async function persist(next) {
+  const persist = useCallback(async (next) => {
     const value = String(!!next);
 
     // 1) Order metafield (persisted to the order after checkout completes)
@@ -79,7 +73,13 @@ function Extension() {
         value: String(attrUserId),
       });
     }
-  }
+  }, [applyMetafieldChange, applyAttributeChange, attrPredictionId, attrUserId]);
+
+  useEffect(() => {
+    if (creditMf?.value == null && attrOptIn == null) {
+      void persist(true); // sets both attribute + metafield ASAP
+    }
+  }, [creditMf?.value, attrOptIn, persist]);
 
   return (
     <s-banner heading="SQWAD Conditional Credit">
