@@ -21,9 +21,9 @@ export default function App() {
   return (
     <div className={styles.index}>
       <div className={styles.content}>
-        <h1 className={styles.heading}>Reward fans the moment their picks hit</h1>
+        <h1 className={styles.heading}>Reward fans the moment their predictions hit</h1>
         <p className={styles.text}>
-          SQWAD Prediction Rebate links Shopify orders to your prediction games,
+          SQWAD Prediction Rebate links Shopify orders to predictions,
           automatically confirming eligibility and issuing instant store credit
           or gift cards when customers guess right.
         </p>
@@ -41,8 +41,7 @@ export default function App() {
         )}
         <ul className={styles.list}>
           <li>
-            <strong>Live game syncing</strong>. We pull active SQWAD games from
-            Firebase so orders are tagged to the right event without manual work.
+            <strong>Live event syncing</strong>. Create events and let the check box appear and disappear on its own
           </li>
           <li>
             <strong>Automated eligibility</strong>. Paid, opted-in orders are
