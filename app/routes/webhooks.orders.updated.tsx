@@ -26,6 +26,7 @@ type MiniOrderResponse = {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  console.log('HEFKJEJ')
   const { topic, shop, session, payload } = await authenticate.webhook(request);
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
   if (topic !== "ORDERS_UPDATED") return new Response();

@@ -4,6 +4,7 @@ import { upsertOrder, markRegistered } from "../server/storage/orders";
 import { ensureActiveShopOrNotify } from "../server/shopify/middleware/shopifyGuard";
 import { makeAdminClient } from "../server/shopify/admin";
 import { ensureOrderGid } from "../server/shopify/ids";
+import { findActiveGame } from "../server/storage/games";
 
 const ORDER_QUERY = `#graphql
   query OrderSqwad($id: ID!) {
@@ -46,9 +47,11 @@ type OrderQueryResponse = {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { topic, shop, session, payload } = await authenticate.webhook(request); // ✅ include session
+  console.info(`[webhooks.orders.paid] Incoming webhook topic ${topic} for ${shop}`);
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
   if (topic !== "ORDERS_PAID") return new Response();
 
+  console.info(`[webhooks.orders.paid] Received webhook for ${shop}`);
   const orderGid = ensureOrderGid(payload); // ✅ single source of truth (gid)
   if (!session?.accessToken) {
     throw new Response("Missing Shopify access token", { status: 401 });
@@ -57,7 +60,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const data = await admin<OrderQueryResponse>(ORDER_QUERY, { id: orderGid });
   const order = data.data?.order;
-  if (!order) return new Response(); // defensively ignore if not found
+  if (!order) {
+    console.warn(`[webhooks.orders.paid] Order payload missing order ${orderGid} for ${shop}`);
+    return new Response(); // defensively ignore if not found
+  }
 
   // (Optional) extra guard
   if (order.displayFinancialStatus !== "PAID") return new Response();
@@ -88,6 +94,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     noteAttributes.get("sqwad_credit_opt_in"),
   ]) ?? false;
 
+  if (!optIn) {
+    console.info(`[orders] Skipping order ${orderGid} for ${shop} because opt-in is false.`);
+    return new Response();
+  }
+
+  const activeGame = await findActiveGame(shop);
+  if (!activeGame) {
+    console.warn(`[orders] No active game found for ${shop}; order ${orderGid} not stored.`);
+    return new Response();
+  }
+
   const predictionId =
     coalesceString([
       metafields.get("predictionId"),
@@ -100,11 +117,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       noteAttributes.get("sqwad_userId"),
     ]) ?? null;
 
-  const eligiblePending = optIn; // queue any opted-in order, prediction is optional
-
   await upsertOrder({
     shopId: shop,
     orderId: orderGid,
+    gameId: activeGame.id,
     orderName: order.name,
     customerId: order.customer?.id ?? null,
     customerEmail: order.customer?.email ?? null,
@@ -116,13 +132,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     predictionId,
     userId,
     optIn,
-    eligiblePending,
+    eligiblePending: true,
     credited: false,
     createdAt: order.createdAt,
     excluded: false
   });
 
-  await markRegistered(shop, orderGid, true);
+  await markRegistered(shop, orderGid, true, { gameId: activeGame.id });
+
+  console.info(
+    `[webhooks.orders.paid] Stored order ${orderGid} for ${shop} (game ${activeGame.id}, optIn ${optIn})`
+  );
 
   return new Response();
 };

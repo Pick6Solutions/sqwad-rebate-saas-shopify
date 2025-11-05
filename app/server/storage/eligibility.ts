@@ -1,5 +1,5 @@
 import { db } from "../firebase";
-import type { OrderRecord } from "./orders";
+import { orderGameIdFromPath, type OrderRecord } from "./orders";
 import { orderDocId } from "../shopify/ids";
 
 /** Winners list for an event */
@@ -17,18 +17,20 @@ export async function findEligibleOrders(
   predictionIds: string[]
 ): Promise<Array<OrderRecord & { id: string }>> {
   const out: Array<OrderRecord & { id: string }> = [];
-  const ordersCollection = db
-    .collection("shops")
-    .doc(shopId)
-    .collection("orders");
+  const ordersCollection = db.collectionGroup("orders");
   for (let i = 0; i < predictionIds.length; i += 10) {
     const chunk = predictionIds.slice(i, i + 10);
     const q = ordersCollection
+      .where("shopId", "==", shopId)
       .where("predictionId", "in", chunk)
       .where("eligiblePending", "==", true)
       .where("credited", "==", false);
     const snap = await q.get();
-    for (const doc of snap.docs) out.push({ id: doc.id, ...(doc.data() as OrderRecord) });
+    for (const doc of snap.docs) {
+      const data = doc.data() as OrderRecord;
+      const inferredGameId = data.gameId ?? orderGameIdFromPath(doc.ref.path);
+      out.push({ id: doc.id, ...data, gameId: inferredGameId ?? null });
+    }
   }
   return out;
 }
@@ -49,7 +51,10 @@ export async function markCredited(
 ) {
   const creditId = updates.idempotencyKey ?? `cred_${order.shopId}_${order.orderId}`;
   const orderIdPart = orderDocId(order.orderId);
-  const orderRef = db.doc(`shops/${order.shopId}/orders/${orderIdPart}`);
+  if (!order.gameId) {
+    throw new Error(`Cannot mark credit for order ${order.orderId} without gameId`);
+  }
+  const orderRef = db.doc(`shops/${order.shopId}/games/${order.gameId}/orders/${orderIdPart}`);
   const creditRef = db.collection("credits").doc(creditId);
 
   await db.runTransaction(async trx => {
