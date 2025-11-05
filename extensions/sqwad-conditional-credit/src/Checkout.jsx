@@ -19,36 +19,36 @@ import {
   useExtensionApi,
 } from '@shopify/ui-extensions/checkout/preact';
 
-const DEFAULT_APP_URL = "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com";
+const API_BASE_URL = "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com";
 
-const API_BASE_URL = (() => {
-  try {
-    const globalEnv = /** @type {Record<string, unknown>} */ (globalThis || {});
-    if (typeof globalEnv.SQWAD_APP_URL === 'string' && globalEnv.SQWAD_APP_URL) {
-      return globalEnv.SQWAD_APP_URL;
-    }
-  } catch {
-    // no-op
-  }
-  const env = typeof process !== 'undefined' && process?.env ? process.env : undefined;
-  if (env) {
-    const resolved =
-      env.SQWAD_ACTIVE_GAME_API_BASE ||
-      env.SQWAD_APP_BASE_URL ||
-      env.SHOPIFY_APP_URL ||
-      env.APP_URL;
-    if (resolved) return resolved;
-  }
-  try {
-    const scriptUrl = globalThis?.shopify?.extension?.scriptUrl;
-    if (typeof scriptUrl === 'string') {
-      return new URL(scriptUrl).origin;
-    }
-  } catch {
-    // no-op
-  }
-  return DEFAULT_APP_URL;
-})();
+// const API_BASE_URL = (() => {
+//   try {
+//     const globalEnv = /** @type {Record<string, unknown>} */ (globalThis || {});
+//     if (typeof globalEnv.SQWAD_APP_URL === 'string' && globalEnv.SQWAD_APP_URL) {
+//       return globalEnv.SQWAD_APP_URL;
+//     }
+//   } catch {
+//     // no-op
+//   }
+//   const env = typeof process !== 'undefined' && process?.env ? process.env : undefined;
+//   if (env) {
+//     const resolved =
+//       env.SQWAD_ACTIVE_GAME_API_BASE ||
+//       env.SQWAD_APP_BASE_URL ||
+//       env.SHOPIFY_APP_URL ||
+//       env.APP_URL;
+//     if (resolved) return resolved;
+//   }
+//   try {
+//     const scriptUrl = globalThis?.shopify?.extension?.scriptUrl;
+//     if (typeof scriptUrl === 'string') {
+//       return new URL(scriptUrl).origin;
+//     }
+//   } catch {
+//     // no-op
+//   }
+//   return DEFAULT_APP_URL;
+// })();
 
 export default function extension() {
   render(<Extension />, document.body);
