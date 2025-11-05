@@ -261,7 +261,7 @@ function Extension() {
   return (
     <s-banner heading="SQWAD Conditional Credit">
       <s-stack gap="base">
-        <s-text>Get store credit (or a gift card) if your pick hits.</s-text>
+        <s-text>Get store credit if the hits.</s-text>
         {rebateDisplay && (
           <s-text appearance="subdued" size="small">
             Total available to rebate in cart: {rebateDisplay}
