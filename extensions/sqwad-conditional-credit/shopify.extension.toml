@@ -16,12 +16,8 @@ module = "./src/Checkout.jsx"
 # module = "./src/ThankYou.jsx"
 
 [extensions.capabilities]
-api_access = true
-
-[extensions.capabilities.network_access]
-domains = [
-  "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com"
-]
+network_access = true
+api_access     = true
 
 # ✅ Declare the metafields you’ll touch, with explicit write access
 [[extensions.metafields]]
