@@ -9,6 +9,17 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
+const APP_VERSION =
+  (typeof process !== "undefined" && process.env
+    ? process.env.APP_VERSION ??
+      process.env.HEROKU_RELEASE_VERSION ??
+      process.env.VERCEL_GIT_COMMIT_SHA
+    : undefined) ??
+  (typeof import.meta !== "undefined"
+    ? import.meta.env?.VITE_APP_VERSION
+    : undefined) ??
+  "dev";
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
 
@@ -129,7 +140,7 @@ export default function Index() {
       </s-section>
       <s-section heading="Get started with products">
         <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
+          Generate THE a product with GraphQL and get the JSON output for that
           product. Learn more about the{" "}
           <s-link
             href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
@@ -196,6 +207,10 @@ export default function Index() {
           <s-link href="https://reactrouter.com/" target="_blank">
             React Router
           </s-link>
+        </s-paragraph>
+        <s-paragraph>
+          <s-text>Version: </s-text>
+          <s-text appearance="subdued">{APP_VERSION}</s-text>
         </s-paragraph>
         <s-paragraph>
           <s-text>Interface: </s-text>
