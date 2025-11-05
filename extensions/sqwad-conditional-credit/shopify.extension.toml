@@ -19,6 +19,9 @@ module = "./src/Checkout.jsx"
 network_access = true
 api_access     = true
 
+[[extensions.capabilities.network_access.domains]]
+url = "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com"
+
 # ✅ Declare the metafields you’ll touch, with explicit write access
 [[extensions.metafields]]
 namespace = "sqwad"
