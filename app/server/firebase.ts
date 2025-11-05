@@ -8,6 +8,15 @@ const projectId = process.env.FIREBASE_PROJECT_ID;
 
 // ESM-safe: no `require`
 function credential() {
+  const inline = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (inline) {
+    try {
+      const parsed = JSON.parse(inline);
+      return cert(parsed);
+    } catch (err) {
+      console.warn("[firebase] FIREBASE_SERVICE_ACCOUNT env var is not valid JSON; falling back to file lookup", err);
+    }
+  }
   const p = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (p) {
     // Use absolute path; resolve from CWD if relative

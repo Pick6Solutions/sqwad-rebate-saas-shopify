@@ -2,7 +2,7 @@
 
 client_id = "1afbcfb093fd2efcaa5c434c8b626a2a"
 name = "sqwad-prediction-rebate"
-application_url = "https://parliament-touring-maple-proceedings.trycloudflare.com"
+application_url = "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com"
 embedded = true
 
 [build]
@@ -46,4 +46,4 @@ uri = "/webhooks/refunds/create"
 scopes = "read_orders,read_customers,write_store_credit_account_transactions,read_store_credit_accounts,write_gift_cards"
 
 [auth]
-redirect_urls = [ "https://parliament-touring-maple-proceedings.trycloudflare.com/api/auth" ]
+redirect_urls = [ "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com/api/auth" ]
