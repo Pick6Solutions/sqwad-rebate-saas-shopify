@@ -16,6 +16,7 @@ import {
   useTotalTaxAmount,
   useSelectedPaymentOptions,
   useShop,
+  useExtensionApi,
 } from '@shopify/ui-extensions/checkout/preact';
 
 const DEFAULT_APP_URL = "https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com";
@@ -69,13 +70,21 @@ function Extension() {
   const totalShippingAmount = useTotalShippingAmount();
   const totalTaxAmount = useTotalTaxAmount();
   const selectedPaymentOptions = useSelectedPaymentOptions();
-  const [gameStatus, setGameStatus] = useState('checking'); // 'checking' | 'active' | 'inactive' | 'unknown'
+  const extensionApi = useExtensionApi();
+  const isCheckoutEditor = Boolean(extensionApi?.extension?.editor);
+  const [gameStatus, setGameStatus] = useState(
+    isCheckoutEditor ? 'active' : 'checking',
+  ); // 'checking' | 'active' | 'inactive' | 'unknown'
 
   // Writers (singular per docs)
   const applyMetafieldChange = useApplyMetafieldsChange();
   const applyAttributeChange = useApplyAttributeChange();
 
   useEffect(() => {
+    if (isCheckoutEditor) {
+      setGameStatus('active');
+      return;
+    }
     if (!shopDomain || !API_BASE_URL) {
       setGameStatus('unknown');
       return;
@@ -108,7 +117,7 @@ function Extension() {
       cancelled = true;
       controller.abort();
     };
-  }, [shopDomain]);
+  }, [shopDomain, isCheckoutEditor]);
 
   // Prefer metafield, fall back to attribute
   const checked = useMemo(() => {
@@ -127,6 +136,11 @@ function Extension() {
     }
     return normalizedOptions.every((option) => option.type === 'creditCard');
   }, [selectedPaymentOptions]);
+
+  const effectiveGameStatus = isCheckoutEditor ? 'active' : gameStatus;
+  const gameActiveKnown = effectiveGameStatus === 'active';
+  const gameInactiveKnown = effectiveGameStatus === 'inactive';
+  const creditCardEligible = isCheckoutEditor ? true : isCreditCardPayment;
 
   const rebateAmount = useMemo(() => {
     if (!subtotalAmount) return null;
@@ -183,9 +197,7 @@ function Extension() {
     }
   }, [rebateAmount]);
 
-  const gameActiveKnown = gameStatus === 'active';
-  const gameInactiveKnown = gameStatus === 'inactive';
-  const canOptIn = gameActiveKnown && isCreditCardPayment;
+  const canOptIn = gameActiveKnown && creditCardEligible;
   const persist = useCallback(async (next) => {
     const value = String(!!next);
 
@@ -233,17 +245,17 @@ function Extension() {
       void persist(false);
       return;
     }
-    if (!isCreditCardPayment) {
+    if (!creditCardEligible) {
       void persist(false);
     }
-  }, [gameActiveKnown, gameInactiveKnown, isCreditCardPayment, checked, persist]);
+  }, [gameActiveKnown, gameInactiveKnown, creditCardEligible, checked, persist]);
 
   useEffect(() => {
     if (!gameActiveKnown) return;
     if (creditMf?.value == null && attrOptIn == null) {
-      void persist(isCreditCardPayment); // set default based on eligibility
+      void persist(creditCardEligible); // set default based on eligibility
     }
-  }, [creditMf?.value, attrOptIn, isCreditCardPayment, persist, gameActiveKnown]);
+  }, [creditMf?.value, attrOptIn, creditCardEligible, persist, gameActiveKnown]);
 
   const displayedChecked = canOptIn ? checked : false;
   const handleCheckboxChange = useCallback(
@@ -267,7 +279,7 @@ function Extension() {
             Total available to rebate in cart: {rebateDisplay}
           </s-text>
         )}
-        {!isCreditCardPayment && (
+        {!creditCardEligible && (
           <s-text appearance="subdued" size="small">
             Select Credit Card at payment to participate in the rebate promotion.
           </s-text>
