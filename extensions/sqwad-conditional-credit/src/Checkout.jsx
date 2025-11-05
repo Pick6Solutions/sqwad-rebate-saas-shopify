@@ -18,6 +18,8 @@ import {
   useShop,
 } from '@shopify/ui-extensions/checkout/preact';
 
+const DEFAULT_APP_URL = 'https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com';
+
 const API_BASE_URL = (() => {
   try {
     const globalEnv = /** @type {Record<string, unknown>} */ (globalThis || {});
@@ -44,7 +46,7 @@ const API_BASE_URL = (() => {
   } catch {
     // no-op
   }
-  return '';
+  return DEFAULT_APP_URL;
 })();
 
 export default function extension() {
