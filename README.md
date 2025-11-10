@@ -16,3 +16,10 @@ Environment:
 - `SHOPIFY_APP_URL` should match your tunnel/application URL (same as `APP_URL`).
 - `SQWAD_ACTIVE_GAME_API_BASE` should point to the same host so checkout extensions can query `/api/active-game`.
 - Production host: `https://sqwad-prediction-rebate-f95e19863c03.herokuapp.com`
+
+Steps To Deploy:
+npm run build
+git add .
+git commit -m "{your changes}"
+git push heroku main
+Shopify app deploy

@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, sessionStorage } from "../shopify.server";
 import { upsertOrder } from "../server/storage/orders";
 import { ensureOrderGid } from "../server/shopify/ids";
 import { ensureActiveShopOrNotify } from "../server/shopify/middleware/shopifyGuard";
@@ -26,12 +26,16 @@ type MiniOrderResponse = {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  console.log('HEFKJEJ')
-  const { topic, shop, session, payload } = await authenticate.webhook(request);
+  console.log("HEFKJEJ");
+  const { topic, shop, payload } = await authenticate.webhook(request);
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
   if (topic !== "ORDERS_UPDATED") return new Response();
   const id = ensureOrderGid(payload);
-  if (!session?.accessToken) throw new Response("Missing Shopify access token", { status: 401 });
+  const sessionId = `offline_${shop}`;
+  const session = await sessionStorage.loadSession(sessionId);
+  if (!session?.accessToken) {
+    throw new Response("Missing Shopify offline session", { status: 401 });
+  }
   const client = makeAdminClient(shop, session.accessToken);
   const data = await client<MiniOrderResponse>(MINI, { id });
   const o = data.data?.order;

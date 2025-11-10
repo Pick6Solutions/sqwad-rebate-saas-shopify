@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
+import { authenticate, sessionStorage } from "../shopify.server";
 import { upsertOrder, markRegistered } from "../server/storage/orders";
 import { ensureActiveShopOrNotify } from "../server/shopify/middleware/shopifyGuard";
 import { makeAdminClient } from "../server/shopify/admin";
@@ -46,15 +46,17 @@ type OrderQueryResponse = {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { topic, shop, session, payload } = await authenticate.webhook(request); // ✅ include session
+  const { topic, shop, payload } = await authenticate.webhook(request); // ✅ validated HMAC
   console.info(`[webhooks.orders.paid] Incoming webhook topic ${topic} for ${shop}`);
   await ensureActiveShopOrNotify(request, shop, topic, payload); // throws 409 if inactive
   if (topic !== "ORDERS_PAID") return new Response();
 
   console.info(`[webhooks.orders.paid] Received webhook for ${shop}`);
   const orderGid = ensureOrderGid(payload); // ✅ single source of truth (gid)
+  const sessionId = `offline_${shop}`;
+  const session = await sessionStorage.loadSession(sessionId);
   if (!session?.accessToken) {
-    throw new Response("Missing Shopify access token", { status: 401 });
+    throw new Response("Missing Shopify offline session", { status: 401 });
   }
   const admin = makeAdminClient(shop, session.accessToken);
 
